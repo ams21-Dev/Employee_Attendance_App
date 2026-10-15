@@ -97,20 +97,30 @@ async def punch_out(payload: PunchOutRequest):
             detail=f"No active punch-in found for employee '{payload.employee_id}'.",
         )
 
-    # --- Business Rule 2: Punch-out must be after punch-in ---
-    if payload.punch_out <= record["punch_in"]:
+# --- Business Rule 2: Punch-out must be after punch-in ---
+    punch_in_time = record["punch_in"]
+    punch_out_time = payload.punch_out
+
+    # Make punch_out offset-aware if punch_in from MongoDB has timezone info
+    if punch_in_time.tzinfo is not None and punch_out_time.tzinfo is None:
+        from datetime import timezone
+        punch_out_time = punch_out_time.replace(tzinfo=timezone.utc)
+    elif punch_in_time.tzinfo is None and punch_out_time.tzinfo is not None:
+        punch_out_time = punch_out_time.replace(tzinfo=None)
+
+    if punch_out_time <= punch_in_time:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Punch-out time must be after punch-in time.",
         )
 
     # --- Business Rule 3: Calculate total hours worked ---
-    delta = payload.punch_out - record["punch_in"]
+    delta = punch_out_time - punch_in_time
     total_hours = round(delta.total_seconds() / 3600, 2)
 
     # Update the document in place
     update = {
-        "punch_out": payload.punch_out,
+        "punch_out": punch_out_time,
         "total_hours": total_hours,
         "status": "completed",
     }
@@ -118,7 +128,6 @@ async def punch_out(payload: PunchOutRequest):
 
     record.update(update)
     return _serialize(record)
-
 
 # ---------------------------------------------------------------------------
 # GET /attendance/{employee_id}
